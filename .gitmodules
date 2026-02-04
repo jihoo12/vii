@@ -1,0 +1,3 @@
+[submodule "tinyasm"]
+	path = tinyasm
+	url = git@github.com:jihoo12/tinyasm.git
