@@ -102,6 +102,7 @@ struct EditorConfig {
     screen_cols: u16,
     screen_rows: u16,
     row_offset: usize,
+    col_offset: usize, // 추가: 화면 왼쪽에 표시될 열의 인덱스
     mode: Mode,
     buffer: EditorBuffer,
     command_buffer: String,
@@ -118,6 +119,7 @@ impl EditorConfig {
             screen_cols: cols,
             screen_rows: rows,
             row_offset: 0, // 0번 줄부터 시작
+            col_offset: 0,
             mode: Mode::Normal,
             buffer: EditorBuffer::new(),
             command_buffer: String::new(),
@@ -232,15 +234,23 @@ impl EditorConfig {
         should_continue
     }
     fn scroll(&mut self) {
-        let visible_rows = (self.screen_rows - 1) as usize; // 상태바 제외
+        let visible_rows = (self.screen_rows - 1) as usize;
+        let visible_cols = self.screen_cols as usize; // 가로 폭
 
-        // 커서가 현재 보이는 오프셋보다 위에 있으면 위로 스크롤
+        // 세로 스크롤 (기존 로직 유지)
         if (self.cy as usize) < self.row_offset {
             self.row_offset = self.cy as usize;
         }
-        // 커서가 현재 보이는 화면 끝보다 아래에 있으면 아래로 스크롤
         if (self.cy as usize) >= self.row_offset + visible_rows {
             self.row_offset = (self.cy as usize) - visible_rows + 1;
+        }
+
+        // 가로 스크롤 추가
+        if (self.cx as usize) < self.col_offset {
+            self.col_offset = self.cx as usize;
+        }
+        if (self.cx as usize) >= self.col_offset + visible_cols {
+            self.col_offset = (self.cx as usize) - visible_cols + 1;
         }
     }
 }
@@ -258,15 +268,23 @@ fn get_terminal_size() -> (u16, u16) {
 
 fn draw_screen(config: &EditorConfig) {
     let visible_rows = (config.screen_rows - 1) as usize;
+    let visible_cols = config.screen_cols as usize;
     
     for y in 0..visible_rows {
-        let file_row_idx = y + config.row_offset; // 오프셋 적용
-        print!("\x1b[K"); // 현재 줄 지우기
+        let file_row_idx = y + config.row_offset;
+        print!("\x1b[K"); 
 
         if file_row_idx < config.buffer.rows.len() {
-            let mut line = config.buffer.rows[file_row_idx].content.clone();
-            line.truncate(config.screen_cols as usize);
-            print!("{}\r\n", line);
+            let row_content = &config.buffer.rows[file_row_idx].content;
+            
+            // col_offset 이후의 문자열만 추출
+            if row_content.len() > config.col_offset {
+                let mut line = row_content[config.col_offset..].to_string();
+                line.truncate(visible_cols); // 화면 폭만큼 자르기
+                print!("{}\r\n", line);
+            } else {
+                print!("\r\n"); // 오프셋이 내용보다 길면 빈 줄
+            }
         } else {
             print!("~\r\n");
         }
@@ -287,17 +305,18 @@ fn draw_status_bar(config: &EditorConfig) {
         print!("\x1b[7m{:width$}\x1b[m", status, width = config.screen_cols as usize);
     }
 }
-fn refresh_screen(config: &mut EditorConfig) { // 가변 참조로 변경
-    config.scroll(); // 그리기 전 스크롤 계산
+fn refresh_screen(config: &mut EditorConfig) {
+    config.scroll();
 
     print!("\x1b[?25l\x1b[H"); 
     draw_screen(config);
     draw_status_bar(config);
 
-    // 커서 좌표 보정: (전체 줄 번호 - 오프셋)
+    // 상대 좌표 계산
     let screen_y = config.cy - config.row_offset as u16;
-    print!("\x1b[{};{}H\x1b[?25h", screen_y + 1, config.cx + 1);
+    let screen_x = config.cx - config.col_offset as u16; // 가로 보정 추가
     
+    print!("\x1b[{};{}H\x1b[?25h", screen_y + 1, screen_x + 1);
     io::stdout().flush().unwrap();
 }
 fn main() {
